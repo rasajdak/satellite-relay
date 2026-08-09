@@ -56,7 +56,7 @@ Text these to the bot (the leading word is the command, case-insensitive):
 | `loc: 43.39, -74.71 at the ridge` | Logs a location ping to the camp map's breadcrumb trail. Also `gps:` / `here:`. Trailing text becomes the note. See "Auto-logging location" below. |
 | `to dad: running late` | Relays an iMessage to a saved contact. Also `msg` / `tell` / `relay`. Only names in `relay_contacts` can be reached. |
 | `reset` | Clears the conversation memory. |
-| anything else | Goes to ChatGPT, which remembers the last few turns (`memory_turns`). |
+| anything else | Goes to ChatGPT (GPT-5.6), which remembers the last few turns (`memory_turns`) and **searches the web** when a question needs current info (`web_search`). |
 
 Weather and memory need no extra keys; relay just needs the contact saved in
 `relay_contacts`. All the internet fetching happens on the Mac — your phone

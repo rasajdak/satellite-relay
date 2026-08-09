@@ -58,14 +58,18 @@ DEFAULTS = {
     "reasoning_effort": "low",             # none|minimal|low|medium|high|xhigh|max —
                                            # low = fast & terse; raise for harder Qs.
                                            # "" omits it (for non-reasoning models).
-    "max_completion_tokens": 1500,         # caps reasoning + visible reply tokens
+    "max_completion_tokens": 2000,         # caps reasoning + visible output tokens
     "system_prompt": (
         "You are a satellite relay assistant. The user is texting you over a "
         "low-bandwidth satellite link and may be off-grid or in an emergency. "
         "Answer in plain text, no markdown. Be extremely concise and direct — "
         "aim for under 300 characters. Lead with the answer. If a question is "
-        "ambiguous, give your single best guess rather than asking to clarify."
+        "ambiguous, give your single best guess rather than asking to clarify. "
+        "When a question needs current or real-time information, search the web. "
+        "Never include URLs, links, or citations — state the fact plainly; "
+        "bandwidth is tiny."
     ),
+    "web_search": True,         # let the model look up current info when needed
     # Nickname -> handle map for the `to <nick>:` relay command. Only these
     # contacts can be messaged, so a garbled field command can't spam numbers.
     "relay_contacts": {},
@@ -89,7 +93,7 @@ DEFAULTS = {
     "max_reply_chars": 900,     # total; split into chunks below
     "chunk_chars": 300,         # per iMessage segment
     "reply_prefix": "",         # e.g. "GPT: " to mark bot replies
-    "openai_timeout": 60,
+    "openai_timeout": 90,      # web search + reasoning can take a bit
     "web_timeout": 15,
 }
 
@@ -428,24 +432,23 @@ def log_location(cfg, lat: float, lon: float, note: str) -> str:
 # ---------------------------------------------------------------------------
 
 def ask_openai(cfg, history, prompt: str) -> str:
-    messages = [{"role": "system", "content": cfg["system_prompt"]}]
-    messages.extend(history)
-    messages.append({"role": "user", "content": prompt})
+    # Uses the Responses API so GPT-5 reasoning models can call the built-in
+    # web_search tool when a question needs current info (the model decides).
+    # System prompt -> `instructions`; conversation memory -> the `input` list.
     payload = {
         "model": cfg["openai_model"],
-        "messages": messages,
-        # Reasoning models (GPT-5+) require max_completion_tokens (NOT max_tokens)
-        # and reject temperature/top_p. This cap also counts reasoning tokens, so
-        # keep headroom above the visible reply length.
-        "max_completion_tokens": cfg.get("max_completion_tokens", 1500),
+        "instructions": cfg["system_prompt"],
+        "input": list(history) + [{"role": "user", "content": prompt}],
+        # Caps reasoning + visible output; leave headroom above the reply length.
+        "max_output_tokens": cfg.get("max_completion_tokens", 2000),
     }
-    # reasoning_effort applies only to reasoning models; include it only when set
-    # so a non-reasoning model (which would reject it) still works.
     effort = cfg.get("reasoning_effort", "")
     if effort:
-        payload["reasoning_effort"] = effort
+        payload["reasoning"] = {"effort": effort}
+    if cfg.get("web_search", True):
+        payload["tools"] = [{"type": "web_search"}]
     req = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
+        "https://api.openai.com/v1/responses",
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {cfg['openai_api_key']}",
@@ -455,7 +458,15 @@ def ask_openai(cfg, history, prompt: str) -> str:
     )
     with urllib.request.urlopen(req, timeout=cfg["openai_timeout"]) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    return data["choices"][0]["message"]["content"].strip()
+    # The final answer lives in output[] items of type "message" -> content[]
+    # items of type "output_text". (No top-level output_text in the raw JSON.)
+    parts = []
+    for item in data.get("output", []):
+        if item.get("type") == "message":
+            for c in item.get("content", []):
+                if c.get("type") == "output_text":
+                    parts.append(c.get("text", ""))
+    return "".join(parts).strip()
 
 
 # ---------------------------------------------------------------------------
