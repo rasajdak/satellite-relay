@@ -1,8 +1,10 @@
 # satrelay — satellite iMessage ↔ ChatGPT bridge
 
 Text ChatGPT from anywhere, even with no cell or wifi, using your iPhone's
-**Messages via satellite**. An always-on Mac (signed into a *dedicated* Apple
-ID) catches the message, asks OpenAI, and texts the answer back.
+**Messages via satellite**. An always-on Mac catches the message, asks OpenAI,
+and texts the answer back. It runs two ways: on a Mac signed into your **own
+Apple ID** (text yourself a note starting with a keyword), or on one with a
+**dedicated Apple ID** (text that address). See *Two ways to run it* below.
 
 ```
 iPhone --(satellite iMessage)--> Mac [satrelay] --(OpenAI)--> reply --(satellite)--> iPhone
@@ -11,12 +13,37 @@ iPhone --(satellite iMessage)--> Mac [satrelay] --(OpenAI)--> reply --(satellite
 ## How it works
 
 `satrelay.py` polls the Messages database (`~/Library/Messages/chat.db`) for
-new inbound texts from your allowed handle(s), runs them through a small
-command dispatcher, and replies over iMessage via AppleScript. Zero
-third-party dependencies — just Python 3 (stdlib).
+new messages (optionally gated by a **trigger keyword** and/or an
+**allow-list**), runs them through a small command dispatcher, and replies over
+iMessage via AppleScript. Zero third-party dependencies — just Python 3 (stdlib).
 
 Because satellite bandwidth is tiny, replies are capped and split into short
 chunks, and the system prompt tells GPT to be terse.
+
+## Two ways to run it
+
+**A) Single account — simplest, no extra Apple ID (recommended).**
+Run the relay on a Mac signed into your **own** Apple ID (the same one as your
+iPhone). Set a `trigger_keyword` (e.g. `"satchat"`) in the config, then text
+**yourself** — a "Note to Self" — starting with that word:
+
+```
+satchat what's a bowline good for?
+```
+
+The relay reads both directions of the thread, so it sees your own message,
+answers it, and tags every reply with a 🛰 marker so it never replies to
+itself. The keyword is what stops it from answering ordinary notes-to-self. No
+second account, no sign-in gymnastics.
+
+**B) Dedicated Apple ID.**
+Run the relay on a Mac signed into a *separate* Apple ID and text **that**
+address from your phone. No keyword needed — `allowed_handles` is the gate.
+Cleaner separation, but you have to create and keep a second account signed in
+(and brand-new Apple IDs can be fussy about staying logged into iMessage).
+
+You need **at least one gate**: a `trigger_keyword`, an `allowed_handles` list,
+or both. Otherwise the relay refuses to start (so it's never wide open).
 
 ## Field commands
 
@@ -55,17 +82,19 @@ daemon at a time. The manual walkthrough below covers the same steps in detail.
 
 ## One-time setup
 
-### 1. The dedicated Apple Account for the Mac
-This relay uses **`you@example.com`** as its own Apple Account (also the
-standing technical/dev identity for app building). Create the Apple Account at
-account.apple.com with that address if you haven't, then sign the *Mac* into
-it — in **Messages ▸ Settings ▸ iMessage only** (do NOT sign it into the Mac's
-System Settings / iCloud; leave your personal iCloud login intact). Keep your
-iPhone on your normal Apple Account. Your phone iMessages `you@example.com`;
-the bot replies to your phone. This avoids the "messaging yourself" reply loop.
+### 1. Sign in (pick a mode)
+**Single-account mode (recommended):** the Mac just needs to be signed into
+your normal Apple ID in Messages — the same one as your iPhone. Nothing else to
+set up here; you'll set a `trigger_keyword` in step 3, and test by texting
+yourself.
 
-Send a test iMessage from your phone to `you@example.com` and confirm a
-**blue bubble** arrives in Messages on the Mac.
+**Dedicated-account mode:** create a separate Apple Account at account.apple.com,
+sign the *Mac* into it in **Messages ▸ Settings ▸ iMessage**, and keep your
+iPhone on your normal account. Your phone iMessages that address; the bot
+replies to your phone. Send a test from your phone and confirm a **blue bubble**
+lands on the Mac. (Heads-up: brand-new email Apple IDs can be stubborn about
+staying signed into iMessage — if it keeps logging out, single-account mode
+avoids the whole issue.)
 
 ### 2. Grant Full Disk Access
 The bot must read `chat.db`, which macOS protects.
@@ -83,8 +112,11 @@ mkdir -p ~/.satrelay
 cp config.example.json ~/.satrelay/config.json
 ```
 Edit `~/.satrelay/config.json`:
-- `allowed_handles`: **your iPhone's** phone number and/or Apple ID email
-  (the sender the bot will answer). Phone numbers match on the last 10 digits.
+- `trigger_keyword`: **single-account mode** — set a word like `"satchat"`; only
+  messages starting with it are answered (leave `""` for dedicated-account mode).
+- `allowed_handles`: **dedicated-account mode** — your iPhone's phone number
+  and/or Apple ID email (the sender the bot will answer). Phone numbers match on
+  the last 10 digits. Can be `[]` if you're using a `trigger_keyword`.
 - `openai_api_key`: your OpenAI key (from platform.openai.com).
 - Tune `openai_model`, `system_prompt`, `chunk_chars` as you like.
 
@@ -115,7 +147,9 @@ Make sure the Mac never sleeps: **System Settings ▸ Displays ▸ Advanced ▸
 ---
 
 ## Using it in the field
-1. Off-grid on your iPhone, open the last thread with the Mac's address.
+1. Off-grid on your iPhone, open the right thread: your **Note to Self** thread
+   in single-account mode (and prefix each message with your keyword, e.g.
+   `satchat …`), or the thread with the **Mac's dedicated address** otherwise.
 2. When you have no signal, iOS offers **Messages via satellite** — follow the
    on-screen guide to connect (point at the satellite).
 3. Send your question. The reply comes back over the same link — keep an eye
@@ -153,10 +187,11 @@ persists in Firebase; to clear it, delete the `track` node from the Firebase
 console (or the camp site can add a "clear trail" button later).
 
 ## Security notes
-- The bot only answers handles in `allowed_handles`. Anyone else is ignored.
+- The relay only acts on messages that pass a gate: the `trigger_keyword`
+  and/or the `allowed_handles` allow-list. It refuses to start with neither set.
+- Every reply is tagged with a 🛰 marker and skipped on the way back in, so the
+  relay never answers its own messages (loop protection for single-account mode).
 - Your OpenAI key lives in `~/.satrelay/config.json` on your Mac only.
-- The dedicated Apple ID means a stranger who somehow got the Mac's address
-  still can't trigger it — they're not on the allow-list.
 
 ## Troubleshooting
 - **"unable to open database file"** → Full Disk Access not granted (step 2),

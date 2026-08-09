@@ -45,8 +45,13 @@ STATE_PATH = Path(os.environ.get("SATRELAY_STATE", HOME / ".satrelay" / "state.j
 CHAT_DB = HOME / "Library" / "Messages" / "chat.db"
 
 DEFAULTS = {
-    # Only messages from these handles get answered. Your normal Apple ID's
-    # phone number and/or email. Phone numbers match on their last 10 digits.
+    # A message must start with this keyword to trigger the relay (case-
+    # insensitive), e.g. "satchat w: Tokyo" or "satchat how do I...". The
+    # keyword is stripped before dispatch. Empty = no keyword gate.
+    "trigger_keyword": "",
+    # Optional allow-list. If non-empty, only these handles are answered — an
+    # extra gate on top of the keyword. Empty = anyone with the keyword.
+    # Phone numbers match on their last 10 digits; emails are lowercased.
     "allowed_handles": [],
     "openai_api_key": "",
     "openai_model": "gpt-4o-mini",
@@ -72,6 +77,11 @@ DEFAULTS = {
     },
     "memory_turns": 6,          # how many prior user/assistant msgs to keep
     "poll_seconds": 4,
+    # Texting yourself (single-account "Note to Self") records a message twice:
+    # a sent copy (is_from_me=1) and a self-received copy (is_from_me=0).
+    # Collapse identical messages seen within this many seconds so each query is
+    # answered once.
+    "dedup_seconds": 45,
     "max_reply_chars": 900,     # total; split into chunks below
     "chunk_chars": 300,         # per iMessage segment
     "reply_prefix": "",         # e.g. "GPT: " to mark bot replies
@@ -122,30 +132,81 @@ def is_allowed(handle: str, allowed) -> bool:
     return any(n and n == norm(a) for a in allowed)
 
 
+REPLY_MARKER = "\U0001F6F0"  # 🛰  prepended to every reply; inbound lines that
+                             # start with it are skipped so the relay never
+                             # answers its own message (loop protection).
+
+
+def strip_trigger(text: str, keyword: str):
+    """Gate a message on the trigger keyword.
+
+    If `keyword` is set, the message must start with it (case-insensitive, on a
+    word boundary); returns the remainder with the keyword and any trailing
+    separators stripped, or None if it doesn't match. If no keyword is
+    configured, returns the text unchanged (no gate).
+    """
+    if not keyword:
+        return text
+    m = re.match(rf"^\s*{re.escape(keyword)}\b[\s:,\-]*(.*)$", text,
+                 re.IGNORECASE | re.DOTALL)
+    return m.group(1).strip() if m else None
+
+
 # ---------------------------------------------------------------------------
 # Reading the Messages DB
 # ---------------------------------------------------------------------------
 
 def decode_attributed_body(blob: bytes) -> str:
-    """Best-effort text extraction from a typedstream NSAttributedString blob."""
+    """Extract the message text from a typedstream NSAttributedString blob.
+
+    Modern Messages stores the body only in `attributedBody`. The text sits in
+    a length-prefixed UTF-8 run right after the NSString class marker:
+
+        ... NSString <class bytes> 2b <len> <utf-8 bytes> ...
+
+    where 0x2b ('+') is the typedstream marker for length-prefixed bytes and
+    <len> is a single byte, or 0x81 followed by a little-endian uint16 for
+    lengths >= 128. Reading the explicit length (rather than regex-scanning a
+    printable run) avoids two bugs: grabbing trailing framing bytes as garbage,
+    and truncating/dropping very short messages.
+    """
     if not blob:
         return ""
     try:
         idx = blob.find(b"NSString")
         if idx == -1:
             return ""
-        tail = blob[idx + len(b"NSString"):]
-        m = re.search(rb"[\x20-\x7e\xc2-\xf4][\x20-\x7e\x80-\xbf]{2,}", tail)
-        if not m:
+        # The '+' length marker sits a few bytes past the class name; bound the
+        # search so we can't accidentally latch onto a '+' inside the message.
+        plus = blob.find(b"\x2b", idx, idx + 16)
+        if plus == -1:
             return ""
-        text = re.split(rb"[\x00-\x08\x0e-\x1f]", m.group(0))[0]
-        return text.decode("utf-8", "replace").strip()
+        p = plus + 1
+        if p >= len(blob):
+            return ""
+        length = blob[p]
+        p += 1
+        if length == 0x81:  # 2-byte little-endian length follows
+            if p + 2 > len(blob):
+                return ""
+            length = int.from_bytes(blob[p:p + 2], "little")
+            p += 2
+        if length <= 0 or p + length > len(blob):
+            return ""
+        return blob[p:p + length].decode("utf-8", "replace").strip()
     except Exception:
         return ""
 
 
 def fetch_new_messages(last_rowid: int):
-    """Return [(rowid, handle, text)] for inbound messages newer than last_rowid."""
+    """Return [(rowid, handle, is_from_me, text)] for messages newer than last_rowid.
+
+    Reads BOTH directions: inbound (is_from_me=0) for the dedicated-account
+    setup, and your own outbound (is_from_me=1) so the relay also works from a
+    SINGLE Apple ID via a "Note to Self" thread. Loop protection is the trigger
+    keyword (the relay's own replies never carry it) plus the REPLY_MARKER skip
+    in the main loop.
+    """
     # Open read-WRITE (not immutable) so SQLite reads the -wal file where
     # Messages keeps recent, un-checkpointed messages. immutable=1 hides them,
     # and a plain ?mode=ro can't open a WAL database. query_only guarantees
@@ -156,11 +217,11 @@ def fetch_new_messages(last_rowid: int):
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT m.ROWID AS rowid, h.id AS handle,
+            SELECT m.ROWID AS rowid, h.id AS handle, m.is_from_me AS fromme,
                    m.text AS text, m.attributedBody AS body
             FROM message m
             JOIN handle h ON m.handle_id = h.ROWID
-            WHERE m.is_from_me = 0 AND m.ROWID > ?
+            WHERE m.ROWID > ?
             ORDER BY m.ROWID ASC
             """,
             (last_rowid,),
@@ -173,7 +234,7 @@ def fetch_new_messages(last_rowid: int):
         text = (r["text"] or "").strip()
         if not text and r["body"]:
             text = decode_attributed_body(r["body"])
-        out.append((r["rowid"], r["handle"], text))
+        out.append((r["rowid"], r["handle"], r["fromme"], text))
     return out
 
 
@@ -466,8 +527,9 @@ def log(*a):
 
 def main():
     cfg = load_config()
-    if not cfg["allowed_handles"]:
-        log("ERROR: no allowed_handles configured. Edit", CONFIG_PATH)
+    if not cfg["allowed_handles"] and not cfg.get("trigger_keyword"):
+        log("ERROR: set a trigger_keyword and/or allowed_handles (need at least",
+            "one gate so the relay isn't wide open). Edit", CONFIG_PATH)
         sys.exit(1)
     if not cfg["openai_api_key"]:
         log("ERROR: no openai_api_key configured. Edit", CONFIG_PATH)
@@ -488,9 +550,13 @@ def main():
             log("ERROR reading chat.db:", e, "\n  -> Likely missing Full Disk Access.")
             sys.exit(1)
 
-    log("satrelay started. Watching for messages from:", cfg["allowed_handles"])
+    log("satrelay started. Trigger keyword:",
+        repr(cfg.get("trigger_keyword") or "(none)"),
+        "| allow-list:", cfg["allowed_handles"] or "(open)")
     log("Model:", cfg["openai_model"], "| relay contacts:",
         list(cfg.get("relay_contacts", {}).keys()) or "none")
+
+    recent = {}  # raw text -> monotonic time, for de-duping self-thread echoes
 
     while True:
         try:
@@ -500,14 +566,38 @@ def main():
             time.sleep(cfg["poll_seconds"])
             continue
 
-        for rowid, handle, text in msgs:
+        for rowid, handle, fromme, text in msgs:
             state["last_rowid"] = rowid
-            if not is_allowed(handle, cfg["allowed_handles"]) or not text:
+            # Skip empties and the relay's own replies (loop protection).
+            if not text or text.startswith(REPLY_MARKER):
                 save_state(state)
                 continue
-            log(f"IN  <{handle}>: {text!r}")
+            # Optional allow-list gate (only enforced if configured).
+            if cfg["allowed_handles"] and not is_allowed(handle, cfg["allowed_handles"]):
+                save_state(state)
+                continue
+            # Keyword gate: message must start with the trigger keyword.
+            payload = strip_trigger(text, cfg.get("trigger_keyword", ""))
+            if payload is None:
+                save_state(state)
+                continue
+            if not payload:
+                payload = "help"   # bare keyword -> show the command list
+            # Collapse the sent + self-received duplicate of a Note-to-Self
+            # message so we don't answer (and bill for) the same query twice.
+            now = time.monotonic()
+            for k, t0 in list(recent.items()):
+                if now - t0 > cfg.get("dedup_seconds", 45):
+                    recent.pop(k, None)
+            if text in recent:
+                recent[text] = now
+                log(f"SKIP dup <{handle}>: {text!r}")
+                save_state(state)
+                continue
+            recent[text] = now
+            log(f"IN  from_me={fromme} <{handle}>: {text!r}")
             try:
-                reply = handle_message(cfg, state, handle, text)
+                reply = handle_message(cfg, state, handle, payload)
             except urllib.error.HTTPError as e:
                 body = e.read().decode("utf-8", "replace")[:200]
                 reply = f"[relay error {e.code}] {body}"
@@ -518,10 +608,16 @@ def main():
             save_state(state)
 
             reply = (reply or "")[: cfg["max_reply_chars"]]
+            if not reply.strip():
+                log(f"OUT <{handle}>: (empty reply, nothing sent)")
+                continue
             if cfg["reply_prefix"]:
                 reply = cfg["reply_prefix"] + reply
+            reply = f"{REPLY_MARKER} {reply}"   # tag so we never re-process it
             log(f"OUT <{handle}>: {reply!r}")
             for part in chunk(reply, cfg["chunk_chars"]):
+                if not part.strip():
+                    continue
                 try:
                     send_imessage(handle, part)
                 except subprocess.CalledProcessError as e:
