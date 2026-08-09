@@ -78,7 +78,7 @@ DEFAULTS = {
     "location_sink": {
         "type": "firebase",
         "database_url": "",   # e.g. https://YOUR-PROJECT-default-rtdb.firebaseio.com
-        "path": "your-app/your-node/track",
+        "path": "camp/your-node/track",
     },
     "memory_turns": 6,          # how many prior user/assistant msgs to keep
     "poll_seconds": 4,

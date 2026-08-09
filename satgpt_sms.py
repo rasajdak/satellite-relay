@@ -40,15 +40,26 @@ import satrelay as sr   # reuse the dispatcher brain
 # ---------------------------------------------------------------------------
 
 def send_sms(cfg, to: str, body: str):
-    """Send an SMS via Twilio's REST API (HTTP Basic auth)."""
+    """Send an SMS via Twilio's REST API (HTTP Basic auth).
+
+    Prefers a Messaging Service (recommended for US A2P deliverability) when
+    twilio_messaging_service_sid is set; otherwise sends from twilio_from_number.
+    """
     sid = cfg.get("twilio_account_sid")
     tok = cfg.get("twilio_auth_token")
     frm = cfg.get("twilio_from_number")
-    if not (sid and tok and frm):
-        sr.log("SMS not configured — set twilio_account_sid/auth_token/from_number")
+    msvc = cfg.get("twilio_messaging_service_sid")
+    if not (sid and tok and (msvc or frm)):
+        sr.log("SMS not configured — need twilio_account_sid + auth_token + "
+               "(messaging_service_sid or from_number)")
         return
+    fields = {"To": to, "Body": body[:1500]}
+    if msvc:
+        fields["MessagingServiceSid"] = msvc
+    else:
+        fields["From"] = frm
     url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
-    data = urllib.parse.urlencode({"To": to, "From": frm, "Body": body[:1500]}).encode()
+    data = urllib.parse.urlencode(fields).encode()
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Authorization", "Basic " + base64.b64encode(f"{sid}:{tok}".encode()).decode())
     req.add_header("Content-Type", "application/x-www-form-urlencoded")

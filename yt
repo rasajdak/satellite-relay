@@ -3,7 +3,7 @@
 # Usage: ./yt {connect|status|logs|update|restart|start|stop|ssh|alive}
 set -euo pipefail
 
-HOST="you@your-mac.local"
+HOST="youruser@your-mac.local"
 SOCK="$HOME/.ssh/cm-yt"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLIST="~/Library/LaunchAgents/com.example.satrelay.plist"

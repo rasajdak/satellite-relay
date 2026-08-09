@@ -16,7 +16,7 @@
   "location_sink": {
     "type": "firebase",
     "database_url": "https://YOUR-PROJECT-default-rtdb.firebaseio.com",
-    "path": "your-app/your-node/track"
+    "path": "camp/your-node/track"
   },
 
   "poll_seconds": 4,
@@ -28,6 +28,7 @@
   "twilio_account_sid": "",
   "twilio_auth_token": "",
   "twilio_from_number": "",
+  "twilio_messaging_service_sid": "",
   "sms_port": 8080,
   "public_url": "",
   "verify_twilio_signature": false
