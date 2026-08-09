@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# yt — control panel for the sat-relay host "your-mac", run from THIS Mac.
+# Usage: ./yt {connect|status|logs|update|restart|start|stop|ssh|alive}
+set -euo pipefail
+
+HOST="you@your-mac.local"
+SOCK="$HOME/.ssh/cm-yt"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLIST="~/Library/LaunchAgents/com.example.satrelay.plist"
+
+run() { ssh -S "$SOCK" "$HOST" "$@"; }
+
+case "${1:-}" in
+  connect)
+    # Establish the password-authenticated master channel (lasts 12h).
+    # You type your-mac's login password once; then all other commands are instant.
+    ssh -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password \
+        -M -S "$SOCK" -o ControlPersist=12h -fN "$HOST" && echo "connected (channel good ~12h)."
+    ;;
+  alive)
+    ssh -o BatchMode=yes -o ConnectTimeout=6 -S "$SOCK" "$HOST" 'echo "channel: ALIVE"' 2>&1 \
+      || echo "channel: DEAD — run: ./yt connect"
+    ;;
+  status)  run 'bash ~/sat-relay/status.sh' ;;
+  logs)    run 'touch ~/sat-relay/satrelay.log; tail -n 40 -f ~/sat-relay/satrelay.log' ;;
+  ssh|shell) ssh -S "$SOCK" "$HOST" ;;
+  update)
+    # Push local code changes to the host, then reload the daemon if it's loaded.
+    rsync -az -e "ssh -S $SOCK" \
+      --exclude '.git/' --exclude '__pycache__/' --exclude '*.pyc' --exclude '*.log' \
+      --exclude 'com.example.satrelay.plist' --exclude 'config.json' \
+      "$REPO"/ "$HOST":sat-relay/
+    echo "code synced."
+    run "launchctl list 2>/dev/null | grep -q satrelay && (launchctl unload $PLIST; launchctl load -w $PLIST; echo 'daemon reloaded') || echo '(daemon not loaded yet — use ./yt start)'"
+    ;;
+  start)   run "launchctl load -w $PLIST && echo started" ;;
+  stop)    run "launchctl unload $PLIST && echo stopped" ;;
+  restart) run "launchctl unload $PLIST 2>/dev/null; launchctl load -w $PLIST && echo restarted" ;;
+  *)
+    echo "yt — control panel for your-mac (sat-relay)"
+    echo "usage: ./yt {connect|status|logs|update|restart|start|stop|ssh|alive}"
+    echo "  connect  open the 12h channel (asks for password once)"
+    echo "  alive    is the channel up?"
+    echo "  status   full status dashboard"
+    echo "  logs     live-tail the daemon log (Ctrl-C to stop)"
+    echo "  update   push local code changes + reload daemon"
+    echo "  start/stop/restart   control the launchd daemon"
+    echo "  ssh      interactive shell on the host"
+    ;;
+esac
