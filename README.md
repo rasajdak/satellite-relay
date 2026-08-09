@@ -218,6 +218,45 @@ rock-solid on normal cell signal, but the satellite return path needs
 field-testing before you rely on it off-grid — which is why the iMessage version
 still exists.
 
+## Facebook Page → your phone (Messenger relay)
+
+`messenger.py` bolts a **Facebook Messenger ↔ SMS bridge** onto the same SMS
+server. When someone messages your Facebook **Page**, it texts you; you reply by
+SMS and it goes back into their Messenger thread. It reuses the SatGPT Twilio
+number and the one webhook server — no second process.
+
+```
+FB user --(Messenger)--> Page webhook /messenger --> texts you: "#a3f Jane: are you open Saturday?"
+you reply by SMS: "#a3f yes, 9-5!" --> /sms --> Meta Send API --> lands in Jane's thread
+```
+
+The `#a3f` is a short, stable handle per sender, so you can juggle several
+threads from one phone. Inbound texts are sorted automatically: a `#code …`
+reply routes to Messenger; a `satgpt …` message still hits the ChatGPT brain.
+
+### Setup
+1. **Meta app + Page.** At developers.facebook.com create an app, add the
+   **Messenger** product, connect your Facebook Page, and generate a **Page
+   access token** (needs `pages_messaging`). Grab the app's **App Secret** too.
+2. **Config** (`~/.satrelay/config.json`):
+   - `fb_page_access_token` — the Page token (never share it)
+   - `fb_app_secret` — verifies inbound webhook signatures
+   - `fb_verify_token` — any string you make up (you'll paste the same one into Meta)
+   - `relay_to_number` — your phone, where Page messages get texted
+   - leave `verify_fb_signature: true` and `relay_ack: true`
+3. **Webhook.** In the Meta app's Messenger settings, set the callback URL to
+   `https://<host>/messenger`, paste your `fb_verify_token`, and click Verify —
+   Meta hits the `GET /messenger` handshake and it echoes the challenge.
+   Subscribe the Page to the **`messages`** field.
+4. Run the same server (`python3 satgpt_sms.py`) and message your Page from
+   another account to test — you should get a text, and your `#code` reply
+   should appear back in Messenger.
+
+**24-hour window:** Meta only lets you message a user freely within 24h of their
+last message. To reply later you need an approved message tag — set
+`fb_message_tag` (e.g. `HUMAN_AGENT`, which requires that Page feature) once you
+have it. Within 24h, no tag is needed.
+
 ## Security notes
 - The relay only acts on messages that pass a gate: the `trigger_keyword`
   and/or the `allowed_handles` allow-list. It refuses to start with neither set.

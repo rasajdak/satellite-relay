@@ -25,6 +25,8 @@
   "chunk_chars": 300,
   "reply_prefix": "",
 
+  "sms_provider": "twilio",
+
   "twilio_account_sid": "",
   "twilio_auth_token": "",
   "twilio_api_key_sid": "",
@@ -33,5 +35,21 @@
   "twilio_messaging_service_sid": "",
   "sms_port": 8080,
   "public_url": "",
-  "verify_twilio_signature": false
+  "verify_twilio_signature": false,
+
+  "sendblue_api_key_id": "",
+  "sendblue_api_secret": "",
+  "sendblue_from_number": "",
+  "sendblue_secret_header": "sb-signing-secret",
+  "sendblue_webhook_secret": "",
+  "verify_sendblue_secret": false,
+
+  "fb_page_access_token": "",
+  "fb_app_secret": "",
+  "fb_verify_token": "",
+  "fb_graph_version": "v21.0",
+  "fb_message_tag": "",
+  "relay_to_number": "",
+  "verify_fb_signature": true,
+  "relay_ack": true
 }
