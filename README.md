@@ -185,6 +185,39 @@ Notes: coordinates must be decimal (not the DMS "44°7′12″" form). The trail
 persists in Firebase; to clear it, delete the `track` node from the Firebase
 console (or the camp site can add a "clear trail" button later).
 
+## Running as an SMS service instead (no Mac, no iMessage)
+
+`satgpt_sms.py` is a second front-end that swaps iMessage for a **text-message
+API** (Twilio). It reuses the same brain (`satrelay.py`) — ChatGPT with web
+search, memory, `loc:`, and relay — but needs **no Mac, no chat.db, no
+AppleScript, and no Apple ID**. It runs on any server a webhook can reach.
+
+```
+phone --(SMS)--> Twilio number --webhook--> satgpt_sms.py --> OpenAI
+phone <--(SMS)-- Twilio <----- reply <---------------------------+
+```
+
+Setup:
+1. Create a Twilio account and buy a phone number.
+2. Add to `~/.satrelay/config.json`: `twilio_account_sid`, `twilio_auth_token`,
+   `twilio_from_number`, and your phone number in `allowed_handles` (so only you
+   get answered). Keep a `trigger_keyword` too if you like.
+3. Run it: `python3 satgpt_sms.py` (listens on `sms_port`, default 8080).
+4. Give it a public URL — `ngrok http 8080` for testing, or deploy to a VPS /
+   cloud host — and point the number's **"A message comes in" → Webhook (HTTP
+   POST)** at `https://<host>/sms`.
+5. Before exposing it publicly, set `public_url` to that exact URL and
+   `verify_twilio_signature: true` so only genuine Twilio requests are accepted.
+
+Then text your Twilio number `satgpt <question>` and the reply comes back as SMS.
+
+**Off-grid caveat:** Apple's *Messages via satellite* lets you **send** an SMS to
+any number over satellite, but **receiving** SMS replies over satellite is
+restricted (iMessage is the transport built for full two-way). So SMS mode is
+rock-solid on normal cell signal, but the satellite return path needs
+field-testing before you rely on it off-grid — which is why the iMessage version
+still exists.
+
 ## Security notes
 - The relay only acts on messages that pass a gate: the `trigger_keyword`
   and/or the `allowed_handles` allow-list. It refuses to start with neither set.

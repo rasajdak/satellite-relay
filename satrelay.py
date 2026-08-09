@@ -361,7 +361,7 @@ def ask_openai(cfg, history, prompt: str) -> str:
 # ---------------------------------------------------------------------------
 
 HELP_TEXT = (
-    "satrelay commands:\n"
+    "SatGPT commands:\n"
     "loc: <lat,lon> <note> — log to camp map\n"
     "to <name>: <msg> — relay a text\n"
     "reset — clear memory\n"

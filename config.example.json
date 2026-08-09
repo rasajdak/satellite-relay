@@ -23,5 +23,12 @@
   "dedup_seconds": 45,
   "max_reply_chars": 900,
   "chunk_chars": 300,
-  "reply_prefix": ""
+  "reply_prefix": "",
+
+  "twilio_account_sid": "",
+  "twilio_auth_token": "",
+  "twilio_from_number": "",
+  "sms_port": 8080,
+  "public_url": "",
+  "verify_twilio_signature": false
 }
