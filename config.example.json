@@ -1,18 +1,16 @@
 {
   "allowed_handles": ["+15551234567", "you@icloud.com"],
-  "trigger_keyword": "",
+  "trigger_keyword": "satgpt",
   "openai_api_key": "sk-REPLACE_ME",
   "openai_model": "gpt-5.6",
   "reasoning_effort": "low",
   "web_search": true,
-  "system_prompt": "You are a satellite relay assistant. The user is texting you over a low-bandwidth satellite link and may be off-grid. Answer in plain text, no markdown. Be extremely concise — under 300 characters. Lead with the answer.",
+  "system_prompt": "You are SatGPT, answering someone texting over a low-bandwidth satellite link who may be off-grid. Reply in plain text, no markdown, and never include URLs, links, or citations. A few short sentences at most. Lead with the answer. Search the web when a question needs current info.",
 
   "relay_contacts": {
     "dad": "+15559990000",
     "sarah": "sarah@icloud.com"
   },
-  "default_location": "Buffalo NY",
-  "weather_units": "fahrenheit",
   "memory_turns": 6,
 
   "location_sink": {

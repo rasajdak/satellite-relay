@@ -4,13 +4,12 @@ SatGPT — bridge satellite iMessages to ChatGPT (and tools) and back.
 
 Runs on an always-on Mac signed into a DEDICATED Apple ID. Watches the
 Messages database for incoming texts from your allowed handle(s), routes them
-through a small command dispatcher (weather / relay / memory / GPT), and
+through a small command dispatcher (relay / memory / web-aware GPT), and
 replies over iMessage. Designed for Apple "Messages via satellite": replies
 are kept short and chunked because bandwidth is tiny.
 
 Field commands (case-insensitive; the leading word is the command):
     help                     -> list commands
-    w: <place>               -> terse live weather (also: wx:, weather:)
     to <nick>: <message>     -> relay an iMessage to a saved contact
                                (also: msg / tell / relay <nick>: ...)
     reset                    -> clear conversation memory
@@ -45,10 +44,10 @@ STATE_PATH = Path(os.environ.get("SATRELAY_STATE", HOME / ".satrelay" / "state.j
 CHAT_DB = HOME / "Library" / "Messages" / "chat.db"
 
 DEFAULTS = {
-    # A message must start with this keyword to trigger the relay (case-
-    # insensitive), e.g. "satchat w: Tokyo" or "satchat how do I...". The
-    # keyword is stripped before dispatch. Empty = no keyword gate.
-    "trigger_keyword": "",
+    # The wake word: a message must start with this (case-insensitive) to
+    # trigger SatGPT, e.g. "satgpt how do I...". Stripped before dispatch.
+    # Empty = no keyword gate (rely on allowed_handles instead).
+    "trigger_keyword": "satgpt",
     # Optional allow-list. If non-empty, only these handles are answered — an
     # extra gate on top of the keyword. Empty = anyone with the keyword.
     # Phone numbers match on their last 10 digits; emails are lowercased.
@@ -60,21 +59,19 @@ DEFAULTS = {
                                            # "" omits it (for non-reasoning models).
     "max_completion_tokens": 2000,         # caps reasoning + visible output tokens
     "system_prompt": (
-        "You are a satellite relay assistant. The user is texting you over a "
-        "low-bandwidth satellite link and may be off-grid or in an emergency. "
-        "Answer in plain text, no markdown. Be extremely concise and direct — "
-        "aim for under 300 characters. Lead with the answer. If a question is "
-        "ambiguous, give your single best guess rather than asking to clarify. "
-        "When a question needs current or real-time information, search the web. "
-        "Never include URLs, links, or citations — state the fact plainly; "
-        "bandwidth is tiny."
+        "You are SatGPT, answering someone texting over a low-bandwidth "
+        "satellite link who may be off-grid or in an emergency. Reply in plain "
+        "text — no markdown, and NEVER include URLs, links, or citations of any "
+        "kind. Keep it concise: at most a few short sentences. Lead with the "
+        "answer. If a question needs current or real-time information, search "
+        "the web and then state the facts plainly (still no links). If a "
+        "question is ambiguous, give your single best guess rather than asking "
+        "to clarify."
     ),
     "web_search": True,         # let the model look up current info when needed
     # Nickname -> handle map for the `to <nick>:` relay command. Only these
     # contacts can be messaged, so a garbled field command can't spam numbers.
     "relay_contacts": {},
-    "default_location": "",     # used when `w:` is sent with no place
-    "weather_units": "fahrenheit",   # or "celsius"
     # Where `loc:` writes location pings. For a Firebase Realtime Database
     # (like the camp site), set type "firebase" + your DB url + node path.
     # Leave database_url empty to disable the loc command.
@@ -280,116 +277,6 @@ def chunk(text: str, size: int):
 
 
 # ---------------------------------------------------------------------------
-# Tools: weather (Open-Meteo, no API key, global)
-# ---------------------------------------------------------------------------
-
-WMO = {
-    0: "clear", 1: "mainly clear", 2: "partly cloudy", 3: "overcast",
-    45: "fog", 48: "icy fog", 51: "light drizzle", 53: "drizzle",
-    55: "heavy drizzle", 56: "freezing drizzle", 57: "freezing drizzle",
-    61: "light rain", 63: "rain", 65: "heavy rain", 66: "freezing rain",
-    67: "freezing rain", 71: "light snow", 73: "snow", 75: "heavy snow",
-    77: "snow grains", 80: "rain showers", 81: "rain showers",
-    82: "heavy showers", 85: "snow showers", 86: "snow showers",
-    95: "thunderstorm", 96: "storm w/ hail", 99: "storm w/ hail",
-}
-
-
-US_STATES = {
-    "al": "alabama", "ak": "alaska", "az": "arizona", "ar": "arkansas",
-    "ca": "california", "co": "colorado", "ct": "connecticut", "de": "delaware",
-    "fl": "florida", "ga": "georgia", "hi": "hawaii", "id": "idaho",
-    "il": "illinois", "in": "indiana", "ia": "iowa", "ks": "kansas",
-    "ky": "kentucky", "la": "louisiana", "me": "maine", "md": "maryland",
-    "ma": "massachusetts", "mi": "michigan", "mn": "minnesota", "ms": "mississippi",
-    "mo": "missouri", "mt": "montana", "ne": "nebraska", "nv": "nevada",
-    "nh": "new hampshire", "nj": "new jersey", "nm": "new mexico", "ny": "new york",
-    "nc": "north carolina", "nd": "north dakota", "oh": "ohio", "ok": "oklahoma",
-    "or": "oregon", "pa": "pennsylvania", "ri": "rhode island",
-    "sc": "south carolina", "sd": "south dakota", "tn": "tennessee", "tx": "texas",
-    "ut": "utah", "vt": "vermont", "va": "virginia", "wa": "washington",
-    "wv": "west virginia", "wi": "wisconsin", "wy": "wyoming", "dc": "district of columbia",
-}
-
-
-def _get_json(url: str, timeout: int):
-    req = urllib.request.Request(url, headers={"User-Agent": "satrelay/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def parse_place(place: str):
-    """Split "City, ST" / "City ST" / "City" into (city, region)."""
-    place = place.strip()
-    if "," in place:
-        city, region = place.split(",", 1)
-        return city.strip(), region.strip()
-    parts = place.split()
-    if len(parts) >= 2 and parts[-1].isalpha() and len(parts[-1]) <= 3:
-        return " ".join(parts[:-1]), parts[-1]
-    return place, ""
-
-
-def _region_matches(result, region: str) -> bool:
-    reg = region.strip().lower()
-    if not reg:
-        return False
-    admin1 = (result.get("admin1") or "").lower()
-    cc = (result.get("country_code") or "").lower()
-    full = US_STATES.get(reg, reg)
-    return admin1 == full or admin1.startswith(full) or full in admin1 or cc == reg
-
-
-def get_weather(cfg, place: str) -> str:
-    place = (place or "").strip() or cfg.get("default_location", "")
-    if not place:
-        return "No location. Try: w: Boulder CO"
-    unit = cfg.get("weather_units", "fahrenheit")
-    deg = "F" if unit == "fahrenheit" else "C"
-    wind_unit = "mph" if unit == "fahrenheit" else "kmh"
-    try:
-        city, region = parse_place(place)
-        geo = _get_json(
-            "https://geocoding-api.open-meteo.com/v1/search?name="
-            + urllib.parse.quote(city) + "&count=5",
-            cfg["web_timeout"],
-        )
-        results = geo.get("results") or []
-        if not results:
-            return f"Couldn't find '{place}'."
-        # Prefer a result matching the given state/region; else top by population.
-        g = next((r for r in results if _region_matches(r, region)), results[0])
-        lat, lon = g["latitude"], g["longitude"]
-        label = ", ".join(filter(None, [g.get("name"), g.get("admin1"), g.get("country_code")]))
-        wx = _get_json(
-            "https://api.open-meteo.com/v1/forecast"
-            f"?latitude={lat}&longitude={lon}"
-            "&current=temperature_2m,weather_code,wind_speed_10m"
-            "&daily=temperature_2m_max,temperature_2m_min,weather_code"
-            f"&temperature_unit={unit}&wind_speed_unit={wind_unit}"
-            "&forecast_days=2&timezone=auto",
-            cfg["web_timeout"],
-        )
-        cur = wx.get("current", {})
-        t = round(cur.get("temperature_2m", 0))
-        w = round(cur.get("wind_speed_10m", 0))
-        cond = WMO.get(int(cur.get("weather_code", -1)), "")
-        daily = wx.get("daily", {})
-        hi = round(daily["temperature_2m_max"][0])
-        lo = round(daily["temperature_2m_min"][0])
-        today_cond = WMO.get(int(daily["weather_code"][0]), "")
-        out = f"{label}: now {t}{deg} {cond}, wind {w}{wind_unit}. Today {hi}/{lo}{deg} {today_cond}."
-        if len(daily["temperature_2m_max"]) > 1:
-            hi2 = round(daily["temperature_2m_max"][1])
-            lo2 = round(daily["temperature_2m_min"][1])
-            c2 = WMO.get(int(daily["weather_code"][1]), "")
-            out += f" Tmrw {hi2}/{lo2}{deg} {c2}."
-        return out
-    except Exception as e:
-        return f"[weather error] {e}"
-
-
-# ---------------------------------------------------------------------------
 # Tools: location logging (Firebase Realtime Database REST write)
 # ---------------------------------------------------------------------------
 
@@ -475,14 +362,12 @@ def ask_openai(cfg, history, prompt: str) -> str:
 
 HELP_TEXT = (
     "satrelay commands:\n"
-    "w: <place> — weather\n"
     "loc: <lat,lon> <note> — log to camp map\n"
     "to <name>: <msg> — relay a text\n"
     "reset — clear memory\n"
     "anything else — ask ChatGPT"
 )
 
-RE_WEATHER = re.compile(r"^\s*(?:weather|wx|w)\s*:\s*(.*)$", re.IGNORECASE)
 RE_LOC = re.compile(r"^\s*(?:loc|gps|pos|ping|here)\s*:\s*(.*)$", re.IGNORECASE)
 RE_RELAY = re.compile(r"^\s*(?:to|msg|tell|relay)\s+([^:]+?)\s*:\s*(.+)$", re.IGNORECASE | re.DOTALL)
 RE_HELP = re.compile(r"^\s*(?:help|commands|\?)\s*$", re.IGNORECASE)
@@ -510,10 +395,6 @@ def handle_message(cfg, state, handle: str, text: str) -> str:
     if RE_RESET.match(text):
         state.get("history", {}).pop(norm(handle), None)
         return "Memory cleared."
-
-    m = RE_WEATHER.match(text)
-    if m:
-        return get_weather(cfg, m.group(1))
 
     m = RE_LOC.match(text)
     if m:

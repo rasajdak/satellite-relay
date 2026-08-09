@@ -24,11 +24,11 @@ chunks, and the system prompt tells GPT to be terse.
 
 **A) Single account — simplest, no extra Apple ID (recommended).**
 Run the relay on a Mac signed into your **own** Apple ID (the same one as your
-iPhone). Set a `trigger_keyword` (e.g. `"satchat"`) in the config, then text
+iPhone). Set a `trigger_keyword` (e.g. `"satgpt"`) in the config, then text
 **yourself** — a "Note to Self" — starting with that word:
 
 ```
-satchat what's a bowline good for?
+satgpt what's a bowline good for?
 ```
 
 The relay reads both directions of the thread, so it sees your own message,
@@ -52,14 +52,13 @@ Text these to the bot (the leading word is the command, case-insensitive):
 | You send | What happens |
 |---|---|
 | `help` | Lists the commands. |
-| `w: Denver CO` | Live weather. Also `wx:` / `weather:`. `w:` alone uses `default_location`. State/country disambiguates (`Buffalo NY` ≠ `Buffalo MN`); works worldwide. No API key. |
 | `loc: 43.39, -74.71 at the ridge` | Logs a location ping to the camp map's breadcrumb trail. Also `gps:` / `here:`. Trailing text becomes the note. See "Auto-logging location" below. |
 | `to dad: running late` | Relays an iMessage to a saved contact. Also `msg` / `tell` / `relay`. Only names in `relay_contacts` can be reached. |
 | `reset` | Clears the conversation memory. |
 | anything else | Goes to ChatGPT (GPT-5.6), which remembers the last few turns (`memory_turns`) and **searches the web** when a question needs current info (`web_search`). |
 
-Weather and memory need no extra keys; relay just needs the contact saved in
-`relay_contacts`. All the internet fetching happens on the Mac — your phone
+Memory and web lookup need no extra setup; relay just needs the contact saved
+in `relay_contacts`. All the internet fetching happens on the Mac — your phone
 stays offline.
 
 ---
@@ -112,7 +111,7 @@ mkdir -p ~/.satrelay
 cp config.example.json ~/.satrelay/config.json
 ```
 Edit `~/.satrelay/config.json`:
-- `trigger_keyword`: **single-account mode** — set a word like `"satchat"`; only
+- `trigger_keyword`: **single-account mode** — set a word like `"satgpt"`; only
   messages starting with it are answered (leave `""` for dedicated-account mode).
 - `allowed_handles`: **dedicated-account mode** — your iPhone's phone number
   and/or Apple ID email (the sender the bot will answer). Phone numbers match on
@@ -149,15 +148,15 @@ Make sure the Mac never sleeps: **System Settings ▸ Displays ▸ Advanced ▸
 ## Using it in the field
 1. Off-grid on your iPhone, open the right thread: your **Note to Self** thread
    in single-account mode (and prefix each message with your keyword, e.g.
-   `satchat …`), or the thread with the **Mac's dedicated address** otherwise.
+   `satgpt …`), or the thread with the **Mac's dedicated address** otherwise.
 2. When you have no signal, iOS offers **Messages via satellite** — follow the
    on-screen guide to connect (point at the satellite).
 3. Send your question. The reply comes back over the same link — keep an eye
    out, and stay connected until it arrives.
 
-Tips: keep questions short. The bot answers tersely by design. Weather,
-directions, "what's poisonous," gear questions, relay-a-message-to-someone all
-work well if you add that logic later.
+Tips: keep questions short. Replies are terse by design and split into ~300-char
+messages. Ask anything — current weather, directions, "what's poisonous," gear
+advice — and it searches the web when a question needs up-to-date facts.
 
 ---
 
