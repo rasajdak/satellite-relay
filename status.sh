@@ -28,7 +28,16 @@ except Exception as e:
 PY
 
 python3 - <<'PY'
-import sqlite3, os, tempfile, shutil, datetime, glob
+import sqlite3, os, tempfile, shutil, datetime, glob, json
+# Privacy: on a personal Apple ID, chat.db holds ALL your texts. Only show
+# message bodies that are actual relay traffic (the trigger keyword, or the
+# relay's own 🛰-tagged replies); everything else is redacted.
+kw = ""
+try:
+    kw = (json.load(open(os.path.expanduser("~/.satrelay/config.json"))).get("trigger_keyword") or "").lower()
+except Exception:
+    pass
+MARK = "\U0001F6F0"
 src = os.path.expanduser("~/Library/Messages/chat.db")
 try:
     d = tempfile.mkdtemp()
@@ -36,13 +45,16 @@ try:
         try: shutil.copy(f, d)
         except Exception: pass
     c = sqlite3.connect(os.path.join(d, "chat.db"))
-    rows = c.execute("select m.ROWID,m.is_from_me,h.id,m.text,m.date from message m "
-                     "left join handle h on m.handle_id=h.ROWID order by m.ROWID desc limit 3").fetchall()
-    print("--- last 3 messages (chat.db, WAL-aware) ---")
+    rows = c.execute("select m.ROWID,m.is_from_me,m.text,m.date from message m "
+                     "order by m.ROWID desc limit 6").fetchall()
+    print("--- recent messages (relay traffic only; personal texts redacted) ---")
     for x in rows:
-        try: dt = (datetime.datetime(2001,1,1)+datetime.timedelta(seconds=(x[4] or 0)/1e9)).strftime("%m-%d %H:%M")
+        try: dt = (datetime.datetime(2001,1,1)+datetime.timedelta(seconds=(x[3] or 0)/1e9)).strftime("%m-%d %H:%M")
         except Exception: dt = "?"
-        print("   #%s %s from_me=%s %s %r" % (x[0], dt, x[1], x[2], (x[3] or "")[:40]))
+        t = x[2] or ""
+        relay = t.startswith(MARK) or (kw and t.strip().lower().startswith(kw))
+        shown = repr(t[:60]) if relay else "[personal — redacted]"
+        print("   #%s %s from_me=%s %s" % (x[0], dt, x[1], shown))
     if not rows: print("   (no messages)")
     shutil.rmtree(d, ignore_errors=True)
 except Exception as e:

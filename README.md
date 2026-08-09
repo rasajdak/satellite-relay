@@ -1,4 +1,4 @@
-# satrelay — satellite iMessage ↔ ChatGPT bridge
+# SatGPT — text ChatGPT from off-grid, over satellite
 
 Text ChatGPT from anywhere, even with no cell or wifi, using your iPhone's
 **Messages via satellite**. An always-on Mac catches the message, asks OpenAI,

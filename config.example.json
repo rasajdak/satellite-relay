@@ -2,7 +2,8 @@
   "allowed_handles": ["+15551234567", "you@icloud.com"],
   "trigger_keyword": "",
   "openai_api_key": "sk-REPLACE_ME",
-  "openai_model": "gpt-4o-mini",
+  "openai_model": "gpt-5.6",
+  "reasoning_effort": "low",
   "system_prompt": "You are a satellite relay assistant. The user is texting you over a low-bandwidth satellite link and may be off-grid. Answer in plain text, no markdown. Be extremely concise — under 300 characters. Lead with the answer.",
 
   "relay_contacts": {

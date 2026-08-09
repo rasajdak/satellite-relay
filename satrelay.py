@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-satrelay — bridge satellite iMessages to ChatGPT (and tools) and back.
+SatGPT — bridge satellite iMessages to ChatGPT (and tools) and back.
 
 Runs on an always-on Mac signed into a DEDICATED Apple ID. Watches the
 Messages database for incoming texts from your allowed handle(s), routes them
@@ -54,7 +54,11 @@ DEFAULTS = {
     # Phone numbers match on their last 10 digits; emails are lowercased.
     "allowed_handles": [],
     "openai_api_key": "",
-    "openai_model": "gpt-4o-mini",
+    "openai_model": "gpt-5.6",             # OpenAI frontier model ("Sol"; alias gpt-5.6)
+    "reasoning_effort": "low",             # none|minimal|low|medium|high|xhigh|max —
+                                           # low = fast & terse; raise for harder Qs.
+                                           # "" omits it (for non-reasoning models).
+    "max_completion_tokens": 1500,         # caps reasoning + visible reply tokens
     "system_prompt": (
         "You are a satellite relay assistant. The user is texting you over a "
         "low-bandwidth satellite link and may be off-grid or in an emergency. "
@@ -85,7 +89,7 @@ DEFAULTS = {
     "max_reply_chars": 900,     # total; split into chunks below
     "chunk_chars": 300,         # per iMessage segment
     "reply_prefix": "",         # e.g. "GPT: " to mark bot replies
-    "openai_timeout": 45,
+    "openai_timeout": 60,
     "web_timeout": 15,
 }
 
@@ -430,9 +434,16 @@ def ask_openai(cfg, history, prompt: str) -> str:
     payload = {
         "model": cfg["openai_model"],
         "messages": messages,
-        "max_tokens": 400,
-        "temperature": 0.4,
+        # Reasoning models (GPT-5+) require max_completion_tokens (NOT max_tokens)
+        # and reject temperature/top_p. This cap also counts reasoning tokens, so
+        # keep headroom above the visible reply length.
+        "max_completion_tokens": cfg.get("max_completion_tokens", 1500),
     }
+    # reasoning_effort applies only to reasoning models; include it only when set
+    # so a non-reasoning model (which would reject it) still works.
+    effort = cfg.get("reasoning_effort", "")
+    if effort:
+        payload["reasoning_effort"] = effort
     req = urllib.request.Request(
         "https://api.openai.com/v1/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
