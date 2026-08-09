@@ -27,6 +27,8 @@
 
   "twilio_account_sid": "",
   "twilio_auth_token": "",
+  "twilio_api_key_sid": "",
+  "twilio_api_key_secret": "",
   "twilio_from_number": "",
   "twilio_messaging_service_sid": "",
   "sms_port": 8080,

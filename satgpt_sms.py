@@ -45,23 +45,24 @@ def send_sms(cfg, to: str, body: str):
     Prefers a Messaging Service (recommended for US A2P deliverability) when
     twilio_messaging_service_sid is set; otherwise sends from twilio_from_number.
     """
-    sid = cfg.get("twilio_account_sid")
-    tok = cfg.get("twilio_auth_token")
+    acct = cfg.get("twilio_account_sid")            # AC… — identifies the account (URL path)
+    user = cfg.get("twilio_api_key_sid") or acct    # API Key SID if set, else account SID
+    pw = cfg.get("twilio_api_key_secret") or cfg.get("twilio_auth_token")
     frm = cfg.get("twilio_from_number")
     msvc = cfg.get("twilio_messaging_service_sid")
-    if not (sid and tok and (msvc or frm)):
-        sr.log("SMS not configured — need twilio_account_sid + auth_token + "
-               "(messaging_service_sid or from_number)")
+    if not (acct and user and pw and (msvc or frm)):
+        sr.log("SMS not configured — need twilio_account_sid (AC…), auth "
+               "(API key secret or auth_token), and a messaging_service_sid or from_number")
         return
     fields = {"To": to, "Body": body[:1500]}
     if msvc:
         fields["MessagingServiceSid"] = msvc
     else:
         fields["From"] = frm
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{acct}/Messages.json"
     data = urllib.parse.urlencode(fields).encode()
     req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Authorization", "Basic " + base64.b64encode(f"{sid}:{tok}".encode()).decode())
+    req.add_header("Authorization", "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode())
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
